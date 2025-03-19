@@ -19,16 +19,17 @@ def extract_reads_from_sam(sam_file):
             sequence = columns[9]          # Sequence of the read
             cigar = columns[5]
 
-            """
+            #reads.append([chromosome, start_position, sequence])
+
+
             matched = True
             
-            for letter in ["I", "D", "N", "S", "H", "P", "X"]:
+            for letter in ["I", "D", "N", "P", "X"]:
                 if letter in cigar:
                     matched = False
             if matched:
                 reads.append([chromosome, start_position, sequence])
-            """
-            reads.append([chromosome, start_position, sequence])
+
     return reads
 
 def reads_processing(all_reads, location):
