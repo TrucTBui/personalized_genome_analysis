@@ -1,8 +1,5 @@
 """
-version 31.01.2025
-Input: A file containing paths to genomes, A file containing paths to searched region(s), Path to reference genome
-Output: Reads within the given region with their variants in sequencing and in comparison with the reference genome
-This script only runs for one individual, not for alignment. For alignment, see bam_fa2seq.py
+version 19.03.2025
 """
 import subprocess
 import argparse
@@ -20,9 +17,18 @@ def extract_reads_from_sam(sam_file):
             chromosome = columns[2]
             start_position = int(columns[3])  # Start position (1-based)
             sequence = columns[9]          # Sequence of the read
+            cigar = columns[5]
 
+            """
+            matched = True
+            
+            for letter in ["I", "D", "N", "S", "H", "P", "X"]:
+                if letter in cigar:
+                    matched = False
+            if matched:
+                reads.append([chromosome, start_position, sequence])
+            """
             reads.append([chromosome, start_position, sequence])
-
     return reads
 
 def reads_processing(all_reads, location):
@@ -59,7 +65,7 @@ def reads_processing(all_reads, location):
 
     return variant_dict
 
-def find_consensus (replicates_dict, reference, location):
+def find_consensus_base (replicates_dict, reference, location):
     seq = ""
     list_variants_dict = []
     for rep, reads in replicates_dict.items():
@@ -68,6 +74,7 @@ def find_consensus (replicates_dict, reference, location):
 
     final_bases_dict = {}
     reference_dict = {}
+    coverage_dict = {}
     chromosome, _ = location.split(":")
     counter = 0  # for extracting bases at specific positions of the reference
     # go through every position of the variant_dict
@@ -79,9 +86,11 @@ def find_consensus (replicates_dict, reference, location):
         counter+=1
         list_frequecy = []
         list_processed_bases = []
+        coverage_dict[pos] = 0
 
         for variant_dict in list_variants_dict:
             bases = variant_dict[pos]
+            coverage_dict[pos] += len(bases)
             frequency = Counter(bases)  # Count how frequent each variant is
             list_frequecy.append(frequency)
             unique_bases = set(bases)
@@ -122,6 +131,7 @@ def find_consensus (replicates_dict, reference, location):
                 combined_frequencies.update(freq_dict)
 
             sorted_bases = sorted(combined_frequencies.items(), key=lambda item: item[1], reverse=True)
+
             ordered_bases = [base for base, count in sorted_bases]
 
             most_frequent_base = ordered_bases[0]  # Extract the most significant base
@@ -131,9 +141,9 @@ def find_consensus (replicates_dict, reference, location):
             ratio12 = ((combined_frequencies[most_frequent_base] + combined_frequencies[second_frequent_base]) / sum(combined_frequencies.values()))
 
             # Process the reads results: The most frequent base is supposed to be the correct one
-            if (ratio >= 0.7 or (sum(combined_frequencies.values()) < 15 and combined_frequencies >= 0.6) or (
-                    len(combined_frequencies) == 3 and (ratio >= 0.6 or ratio / ratio2 >= 1.5)) or
-                    (len(unique_bases) >= 4 and ratio / ratio2 >= 1.5)):
+            if (ratio >= 0.7 or (sum(combined_frequencies.values()) < 15 and ratio >= 0.6) or (
+                    len(combined_frequencies) == 3 and (ratio >= 0.6 or combined_frequencies[most_frequent_base]  / combined_frequencies[second_frequent_base] >= 1.5)) or
+                    (len(combined_frequencies) >= 4 and combined_frequencies[most_frequent_base]  / combined_frequencies[second_frequent_base] >= 1.5)):
                 final_bases_dict[pos] = most_frequent_base
                 seq += most_frequent_base
 
@@ -146,7 +156,7 @@ def find_consensus (replicates_dict, reference, location):
                     final_bases_dict[pos] = 'N'  # Unknown bases
                     seq += 'N'
                     all_special_cases[pos_name] = sorted_bases
-    return final_bases_dict, reference_dict, seq
+    return final_bases_dict, reference_dict, seq, coverage_dict
 
 def extract_ref_genome(fa, locations):
     """
@@ -221,10 +231,15 @@ def print_output(output_path, results, seqs, all_special_cases):
     with open(f"{output_path}/sequence_merged.tsv", "w") as o:
         o.write("\n".join(seqs))
     with open(f"{output_path}/special_cases.tsv", "w") as o:
-        o.write("Person\tPosition\tBases\n")
+        o.write("Person\tPosition\tA\tT\tG\tC\n")
         for pos in sorted(all_special_cases.keys()):
             case = all_special_cases[pos]
-            o.write(f"{person}\t{pos}\t{case}\n")
+            case = dict(case)
+            A = case["A"] if "A" in case else 0
+            T = case["T"] if "T" in case else 0
+            G = case["G"] if "G" in case else 0
+            C = case["C"] if "C" in case else 0
+            o.write(f"{person}\t{pos}\t{A}\t{T}\t{G}\t{C}\n")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-g", "--genome", type=str, required=True, help="file containing path to genome(s) in bam format")
@@ -270,7 +285,7 @@ else:
     raise Exception("Location file not found or not correct")
 
 
-results = [f"Person\tChromosome\tPosition\tType\tReference\tAlternative"]
+results = [f"Person\tChromosome\tPosition\tType\tCoverage\tReference\tAlternative"]
 seqs = [f"Person\tLocation\tType\tSequence"]
 
 all_reads_of_replicates = {}
@@ -299,12 +314,13 @@ for location in locations:
     # Process reads and find variants for the current location
     type = locations_with_type[(chrom, start_pos, end_pos)]
 
-    final_bases_dict, reference_dict, seq = find_consensus(all_reads_of_replicates, ref, location)
+    final_bases_dict, reference_dict, seq, coverage_dict = find_consensus_base(all_reads_of_replicates, ref, location)
 
     for pos in sorted(final_bases_dict.keys()):
         r = reference_dict[pos]
         p = final_bases_dict[pos]  # Final base
-        results.append(f"{person}\t{chrom}\t{pos}\t{type}\t{r}\t{p}")
+        c = coverage_dict[pos]  # coverage/ sequencing depth at that pos
+        results.append(f"{person}\t{chrom}\t{pos}\t{type}\t{c}\t{r}\t{p}")
     seqs.append(f"{person}\t{location}\t{type}\t{seq}")
 
 end_time = time.perf_counter()
