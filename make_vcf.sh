@@ -70,9 +70,9 @@ mkdir -p "${output_bam_dir}"
 subset_bam() {
   local bam_file="$1"
   local bam_base=$(basename "$bam_file" .bam)
-  local subset_bam="${output_bam_dir}/${bam_base}_${region}.bam"
+  local subset_bam="${output_bam_dir}/${bam_base}_ss.bam"
 
-  samtools view -b "$bam_file" "$region" -o "$subset_bam"
+  samtools view -b "$bam_file" "$region" > "$subset_bam"
   samtools index "$subset_bam"
 
   echo "$subset_bam"
@@ -84,6 +84,7 @@ process_single_bam() {
   local bam_base=$(basename "$bam_file" .bam)
   local output_vcf="${output_unmerged_dir}/${bam_base}.vcf.gz"
   local index_file="$bam_file.bai"
+  local temp_all_variants="${output_unmerged_dir}/tmp_${bam_base}.vcf.gz"
 
   echo "Processing single BAM file: $bam_file"
 
@@ -100,10 +101,14 @@ process_single_bam() {
   # Call variants
   echo "Calling variants into: $output_vcf"
   bcftools mpileup -Ou -f "$reference_genome" -r "$region" -a AD,DP "$bam_file" | \
-  bcftools call -mv -Oz -o "$output_vcf"
+  bcftools call -mv -Oz -o "$temp_all_variants" -
+  bcftools view -v snps -Oz -o "$output_vcf" "$temp_all_variants"
+
   if [ $? -ne 0 ]; then
     echo "Error calling variants for: $bam_file"
     return 1
+    else
+      rm "$temp_all_variants"
   fi
 
   echo "Successfully processed: $bam_file -> $output_vcf"
@@ -139,9 +144,7 @@ if [ ${#bam_files[@]} -ge 1 ]; then
 
     if [ ! -f "$no_rg_bam" ]; then
       samtools view -h "$bam_file" | grep -v '@RG' | samtools view -b -o "$no_rg_bam"
-      if [ $? -eq 0 ]; then
-        echo "Successfully removed @RG lines from: $bam_file -> $no_rg_bam"
-      else
+      if [ ! $? -eq 0 ]; then
         echo "Error removing @RG lines from: $bam_file"
         exit 1
       fi
@@ -160,6 +163,8 @@ if [ ${#bam_files[@]} -ge 1 ]; then
   done
   merged_bam="${output_bam_dir}/${merged_basename}.bam"
   merged_vcf="${output_merged_dir}/${id}_${merged_basename}.vcf.gz"
+  temp_all_variants="${output_merged_dir}/tmp_${id}_${merged_basename}.vcf.gz"
+
 
   # --- Merge the no-RG BAM files ---
   echo "Merging the no-RG BAM files into: $merged_bam"
@@ -181,12 +186,18 @@ if [ ${#bam_files[@]} -ge 1 ]; then
     exit 1
   fi
 
+
   # --- Call variants on the merged BAM ---
   echo "Calling variants on the merged BAM into: $merged_vcf"
+
   bcftools mpileup -Ou -f "$reference_genome" -r "$region" -a AD,DP "$merged_bam" | \
-  bcftools call -mv -Oz -o "$merged_vcf"
+  bcftools call -mv -Oz -o "$temp_all_variants" -
+  bcftools view -v snps -Oz -o "$merged_vcf" "$temp_all_variants"
+
+
   if [ $? -eq 0 ]; then
     echo "Successfully called variants on merged BAM."
+    rm "$temp_all_variants"
   else
     echo "Error calling variants on merged BAM."
     exit 1

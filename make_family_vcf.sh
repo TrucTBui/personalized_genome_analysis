@@ -1,5 +1,5 @@
 reference_genome="/mnt/raidinput/input/own/ReferenceGenomes/human_g1k_v37.fasta.gz"
-region="17:7565096-7590864"
+region="17:7565096-7590855"
 output_dir="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/VCF/playground"
 
 # Define BAM file pairs for each run
@@ -25,11 +25,13 @@ for bam_pair in "${bam_files[@]}"; do
 done
 
 vcf_dir="${output_dir}/merged_vcf"
-merged_vcf="${vcf_dir}/family_output.vcf.gz"
+merged_vcf="${output_dir}/family_output.vcf.gz"
+merged_vcf_snv="${output_dir}/family_output.vcf.snp.gz"
+
 
 for vcf_file in "$vcf_dir"/*.vcf.gz; do
   # Index the VCF file if it hasn't been indexed already
-  if [ ! -f "${vcf_file}.tbi" ]; then
+  #if [ ! -f "${vcf_file}.tbi" ]; then
     echo "Indexing VCF file with tabix: $vcf_file"
     tabix -p vcf "$vcf_file"
     if [ $? -eq 0 ]; then
@@ -38,7 +40,7 @@ for vcf_file in "$vcf_dir"/*.vcf.gz; do
       echo "Error indexing: $vcf_file"
       exit 1
     fi
-  fi
+  #fi
 done
 
 echo "Merging all VCF files..."
@@ -50,3 +52,11 @@ else
   echo "Error merging VCF files."
   exit 1
 fi
+
+tabix -p vcf "$merged_vcf"
+if [ $? -eq 1 ]; then
+  echo "Error indexing: $merged_vcf"
+  exit 1
+fi
+
+
