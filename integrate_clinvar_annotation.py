@@ -215,7 +215,7 @@ result = search_variance_in_clinvar(merged_result, cinvar_df)
 result.to_csv("/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Family/merged_results_w_clinvar.tsv", sep='\t', index=False)  # Save as TSV
 """
 
-merged_result = pd.read_csv("/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Family/merged_results_filtered.tsv", sep="\t")
+merged_result = pd.read_csv("/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Family/merged_results_filtered_2.tsv", sep="\t")
 filter_vcf_by_genes_grep("/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/clinvar/clinvar.vcf.gz", "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/clinvar/filtered_clinvar.vcf", "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/clinvar/gene_list.txt")
 cinvar_df = transform_clinvar_vcf("/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/clinvar/filtered_clinvar.vcf.gz", "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/clinvar/filtered_clinvar_transformed.tsv")
 result = search_variance_in_clinvar(merged_result, cinvar_df)

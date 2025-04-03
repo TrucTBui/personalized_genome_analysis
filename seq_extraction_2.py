@@ -1,5 +1,8 @@
 """
-version 24.03.2025
+version 25.03.2025
+Diff from the 1st version (seq_extraction.py):
+- the genomic base counting process is not done naively, but with samtools
+- use new annotation version from ISAR
 """
 import subprocess
 import argparse
@@ -7,80 +10,114 @@ import os
 from collections import Counter, defaultdict
 import time
 from intervaltree import IntervalTree
-
-def extract_reads_from_sam(sam_file):
-    reads = []
-
-    with open(sam_file, 'r') as file:
-        for line in file:
-            line = line.strip()
-            if line.startswith('@'):
-                continue  # Skip header lines
-
-            columns = line.strip().split('\t')
-            chromosome = columns[2]
-            start_position = int(columns[3])  # Start position (1-based)
-            sequence = columns[9]          # Sequence of the read
-            cigar = columns[5]
-
-            #reads.append([chromosome, start_position, sequence])
+import collections
+import re
+import pandas as pd
 
 
-            matched = True
+def variant_dict_from_samtools(sam_file, region=None):
+    """
+    Generates a variant dictionary from a SAM file using samtools mpileup,
+    handling insertions, deletions, and sequencing errors.
 
-            for letter in ["I", "D", "N", "P", "X", "*"]:
-                if letter in cigar:
-                    matched = False
-            if matched:
-                read_tuple = (chromosome, start_position, sequence)
-                reads.append(read_tuple)
+    Args:
+        sam_file (str): Path to the SAM file.
+        region (str, optional): Genomic region in the format "chr:start-end".
+                                If None, processes the entire SAM file.
 
-    return reads
+    Returns:
+        dict: A dictionary where keys are genomic positions and values are lists of bases.
+    """
+    variant_dict = collections.defaultdict(list)
+    samtools_command = ["samtools", "mpileup", "-aa", sam_file]
 
-def reads_processing(all_reads, location):
-    chromosome, pos_range = location.split(":")
-    start_range, end_range = map(int, pos_range.split("-"))
+    if region:
+        samtools_command.extend(["-r", region])
 
-    variant_dict = {}
+    try:
+        mpileup_output = subprocess.check_output(samtools_command, text=True)
+        lines = mpileup_output.strip().split('\n')
 
-    for read in all_reads:
-        read_chromosome = read[0]
-        read_start = read[1]  # Start pos of read
-        read_end = read_start + len(read[2]) - 1
+        for line in lines:
+            parts = line.split('\t')
+            if len(parts) < 5:
+                continue  # Skip lines that don't have the required number of fields
 
-        # check for suitable reads
-        if chromosome != read_chromosome:
-            continue
-        if read_end < start_range or read_start > end_range:
-            continue
+            chromosome = int(parts[0])
+            position = int(parts[1])  # 1-based genomic position
+            bases = parts[4]
 
-        # determine the actual start and end positions of the trimmed read
-        actual_start = max(read_start, start_range)
-        actual_end = min(read_end, end_range)
+            parsed_bases = parse_mpileup_bases(bases)
+            variant_dict[position] = parsed_bases
 
-        # trim the sequence
-        trimmed_sequence = read[2][actual_start - read_start:actual_end - read_start + 1]
-
-        # find variants
-        for i, base in enumerate(trimmed_sequence):
-            # pos = f"{chromosome}:{actual_start + i}"
-            pos = actual_start + i
-            if pos not in variant_dict:
-                variant_dict[pos] = []
-            variant_dict[pos].append(base)
+    except FileNotFoundError:
+        print(f"Error: SAM file '{sam_file}' not found.")
+        return {}
+    except subprocess.CalledProcessError as e:
+        print(f"Error: samtools mpileup failed: {e}")
+        return {}
 
     return variant_dict
 
-def find_consensus_base (replicates_dict, reference, location):
-    seq = ""
-    list_variants_dict = []
-    for rep, reads in replicates_dict.items():
-        variant_dict = reads_processing(reads, location)
-        list_variants_dict.append(variant_dict)
+def parse_mpileup_bases(bases):
+    """
+    Parses the base string from samtools mpileup, including indels.
 
+    Args:
+        bases (str): The base string from samtools mpileup.
+
+    Returns:
+        list: A list of observed bases and indels at the position.
+    """
+    parsed_bases = []
+    i = 0
+    while i < len(bases):
+        base = bases[i]
+        # Match standard bases
+        if base in "ATCGatcg":
+            parsed_bases.append(base.upper())
+            i += 1
+        # Match insertions (+n[ATCG...])
+        elif base == '+':
+            match = re.match(r'\+(\d+)([ATCGatcg]+)', bases[i:])
+            if match:
+                length = int(match.group(1))
+                insertion = match.group(2)[:length].upper() # extract only the number of letters specified by the number
+                #parsed_bases.append(f"+{insertion}")
+                i += len(match.group(1)) + length + 1 #increment by the length of the number, the insertion, and the + sign.
+            else:
+                i += 1  # handle unexpected +
+        # Match deletions (-n[ATCG...])
+        elif base == '-':
+            match = re.match(r'\-(\d+)([ATCGNatcgn]+)', bases[i:])
+            if match:
+                length = int(match.group(1))
+                deletion = match.group(2)[:length].upper() #extract only the number of letters specified by the number
+                #parsed_bases.append(f"-{deletion}")
+                i += len(match.group(1)) + length + 1 #increment by the length of the number, the deletion, and the - sign.
+            else:
+                i += 1  # handle unexpected -
+        # match ^ and $ which are read quality and end of read symbols.
+        elif base == '^' or base == '$':
+            i += 1
+        else:
+            i += 1  # handle other characters
+    return parsed_bases
+
+def find_consensus_base_new (sams, reference, location):
+    list_variants_dict = []
+    list_id = []
+    for id,sam in sams.items():
+        variant_dict = variant_dict_from_samtools(sam, location)
+        list_variants_dict.append(variant_dict)
+        list_id.append(id)
+
+    seq = ""
     final_bases_dict = {}
     reference_dict = {}
     coverage_dict = {}
+    frequency_dict ={}
+
     chromosome, _ = location.split(":")
     counter = 0  # for extracting bases at specific positions of the reference
     # go through every position of the variant_dict
@@ -93,12 +130,19 @@ def find_consensus_base (replicates_dict, reference, location):
         list_frequecy = []
         list_processed_bases = []
         coverage_dict[pos] = 0
+        frequency_dict[pos] = {} # Initialize the inner dictionary for the current position
 
-        for variant_dict in list_variants_dict:
+        for i in range(len(list_variants_dict)):
+            variant_dict = list_variants_dict[i]
+            id = list_id[i]
             bases = variant_dict[pos]
             coverage_dict[pos] += len(bases)
             frequency = Counter(bases)  # Count how frequent each variant is
             list_frequecy.append(frequency)
+
+            # Add the base frequency of each rep to the dict
+            frequency_dict[pos][id] = frequency
+
             unique_bases = set(bases)
 
             if len(unique_bases) == 0:  # Empty counts
@@ -127,6 +171,7 @@ def find_consensus_base (replicates_dict, reference, location):
             else:  # clear base
                 list_processed_bases.append(bases[0])
 
+
         # Compare all replicates to find consensus bases at the position
         if "N" in list_processed_bases:
             final_bases_dict[pos] = 'N'  # Unknown bases
@@ -137,7 +182,7 @@ def find_consensus_base (replicates_dict, reference, location):
         elif all('/' not in base for base in list_processed_bases) and len(set(list_processed_bases)) == 1:
             final_bases_dict[pos] = list_processed_bases[0]
             seq += final_bases_dict[pos]
-            if list_processed_bases[0] is not r:
+            if list_processed_bases[0] != r:
                 combined_frequencies = Counter()
                 # NOTE: Sum up all dictionaries (KEY STEP)
                 for freq_dict in list_frequecy:
@@ -185,7 +230,7 @@ def find_consensus_base (replicates_dict, reference, location):
                         final_bases_dict[pos] = 'N'  # Unknown bases
                         seq += 'N'
                         all_special_cases[pos_name] = sorted_bases
-    return final_bases_dict, reference_dict, seq, coverage_dict
+    return final_bases_dict, reference_dict, seq, coverage_dict, frequency_dict
 
 def extract_ref_genome(fa, locations):
     """
@@ -233,17 +278,17 @@ def transform_location_input(path):
     """
     locations= []
     locations_with_type = {}
-    transcripts = {}
 
     with open(path, 'r') as f:
         for line in f:
             if not line.startswith("#"):
                 fields = line.split()
-                transcript_id = fields[1]
+                chromosome = fields[0]
                 type = fields[2]
-                if type == "exon":  # Ignore, since UTR and CDS are already in exons
+                #if type in {"exon", "gene", "transcript", "intron"}:
+                if type in {"exon", "gene", "transcript"}:
                     continue
-                chromosome = fields[6]
+
                 if chromosome.startswith("chr"):
                     chromosome = chromosome[3:]
                 start = int(fields[3])
@@ -256,29 +301,7 @@ def transform_location_input(path):
                     locations_with_type[location_string] = set()
                 locations_with_type[location_string].add(type)
 
-                if transcript_id not in transcripts:
-                    transcripts[transcript_id] = {'exons': [], 'chromosome': chromosome}
-                transcripts[transcript_id]['exons'].append((start, end))
-        """
-        # Add intron locations
-        for transcript_id, data in transcripts.items():
-            exons = sorted(data['exons'])
-            chromosome = data['chromosome']
-
-            if len(exons) > 1:
-                for i in range(len(exons) - 1):
-                    intron_start = exons[i][1] + 1
-                    intron_end = exons[i + 1][0] - 1
-                    if intron_start <= intron_end:
-                        intron_location_string = f"{chromosome}:{intron_start}-{intron_end}"
-                        locations.append(intron_location_string)
-
-                        if intron_location_string not in locations_with_type:
-                            locations_with_type[intron_location_string] = set()
-                        locations_with_type[intron_location_string].add('intron')
-"""
-
-    with open(f"{os.path.dirname(path)}/locations_transformed.txt", 'w') as w:
+    with open(f"{os.path.dirname(path)}/locations_transformed_v2.txt", 'w') as w:
          for location in locations:
              w.write(f"{location}\n")
     return locations, locations_with_type
@@ -324,6 +347,10 @@ def print_output(output_path, results, seqs, all_special_cases):
         o.write("\n".join(results))
     with open(f"{output_path}/sequence_merged.tsv", "w") as o:
         o.write("\n".join(seqs))
+    freq_file_path = f"{output_path}/frequency.tsv"
+    with open(freq_file_path, "w") as o:
+        o.write("\n".join(freqs))
+    process_replicate(freq_file_path)
     with open(f"{output_path}/special_cases.tsv", "w") as o:
         o.write("Person\tPosition\tA\tT\tG\tC\n")
         for pos in sorted(all_special_cases.keys()):
@@ -335,14 +362,65 @@ def print_output(output_path, results, seqs, all_special_cases):
             C = case["C"] if "C" in case else 0
             o.write(f"{person}\t{pos}\t{A}\t{T}\t{G}\t{C}\n")
 
-def print_read_stats(output_path, all_reads_count, all_removed_reads_count, all_reads_count_genome, all_removed_reads_count_genome):
+def print_read_stats(output_path, reads_count):
     with open(f"{output_path}/reads_stats.tsv", "w") as o:
-        """
-        o.write("Person\t#All_Reads\t#All_Removed_Reads\tRemoval_Percentage\tWhole_Genome\n")
-        o.write(f"{person}\t{all_reads_count}\t{all_removed_reads_count}\t{round(all_removed_reads_count/all_reads_count, 4)}\t-\n")
-        o.write(f"{person}\t{all_reads_count_genome}\t{all_removed_reads_count_genome}\t{round(all_removed_reads_count_genome/all_reads_count_genome, 4)}\t+\n")
-        """
         o.write("".join(reads_count))
+
+def process_replicate(freq_file):
+    df = pd.read_csv(freq_file, sep="\t")
+    df = df.drop_duplicates()
+    consistency = []
+    freq_columns = df.filter(regex='^Frequency').columns
+
+    for _, row in df.iterrows():
+        freq_values = row[freq_columns].values
+
+        if any(pd.isna(freq) or freq == "NA" for freq in freq_values):
+            consistency.append("no_counts")
+            continue  # Skip further processing for this row, since no counts
+
+        freq_counts_per_replicate = []
+
+        # Parse frequency values for each replicate
+        for freq in freq_values:
+            replicate_counts = {}
+            alleles = freq.split(";")
+            for allele in alleles:
+                if allele:
+                    base, count = allele.split(":")
+                    count = int(count)
+                    replicate_counts[base] = count
+            freq_counts_per_replicate.append(replicate_counts)
+
+        # Determine major alleles in each replicate
+        major_alleles_per_replicate = []
+        for counts in freq_counts_per_replicate:
+            total = sum(counts.values())
+            sorted_alleles = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+            # Identify major alleles (top 1 or 2) covering at least 90% of total counts
+            major_alleles = []
+            cumulative_count = 0
+            for base, count in sorted_alleles:
+                major_alleles.append(base)
+                cumulative_count += count
+                if cumulative_count / total >= 0.80:
+                    break
+            major_alleles_per_replicate.append(set(major_alleles))
+
+        # Check if major alleles are consistent across all replicates
+        first_replicate_major = major_alleles_per_replicate[0]
+        if all(major == first_replicate_major for major in major_alleles_per_replicate):
+            consistency.append("normal")
+        else:
+            consistency.append("inconsistent")
+
+    df["Consistency"] = consistency
+    df.to_csv(freq_file, sep="\t", index=False)
+
+    #TODO: Stats (bash). Make this faster
+
+    return df
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-g", "--genome", type=str, required=True, help="file containing path to genome(s) in bam format")
@@ -366,23 +444,10 @@ start_time = time.perf_counter()  # runtime measurement
 # Parse the input path to a list of bam files (index 0) and vcf files(index1)
 genomes= parse_genome(genome_path)
 
-"""
-# The input file is already a csv file, each line containing the position
-if os.path.isfile(location_path):  # Input is a file
-    with open(location_path, 'r') as f:
-        for line in f:
-            if not line.startswith("#"):
-                locations.append(line.strip())
-else:
-    raise Exception("Location file not found or not correct")
-
-ref_genome = extract_ref_genome(ref_path, location_path)
-"""
-
 if os.path.isfile(location_path):  # Input is the annotation file from ISAR
     locations, locations_with_type = transform_location_input(location_path)
     non_overlapping_regions = merge_regions(locations)
-    transformed_path = f"{os.path.dirname(location_path)}/locations_transformed.txt"
+    transformed_path = f"{os.path.dirname(location_path)}/locations_transformed_v2.txt"
     ref_genome = extract_ref_genome(ref_path, transformed_path)
 
 else:
@@ -390,8 +455,10 @@ else:
 
 
 results = [f"Person\tChromosome\tPosition\tType\tCoverage\tReference\tAlternative"]
-seqs = [f"Person\tLocation\tType\tSequence"]
+seqs = [f"Person\tLocation\tSequence"]
 reads_count = [f"Person\t#All_Reads\t#All_Removed_Reads\tRemoval_Percentage\tWhole_Genome\n"]
+freqs=[]
+freqs_str = f"Person\tChromosome\tPosition\tType\tReference\t"
 
 all_reads_of_replicates = {}
 all_special_cases = {}
@@ -400,20 +467,27 @@ all_removed_reads_count = 0
 all_reads_count_genome = 0
 all_removed_reads_count_genome = 0
 
+sam_dict = {}
+fred_dict_all ={}
+genome_basename_list = []
+combined_locations = ' '.join(locations)
+combined_non_overlapping_regions = " ".join(non_overlapping_regions)
+
 for genome in genomes:
 
     genome_basename = os.path.splitext(os.path.basename(genome))[0]
+    genome_basename_list.append(genome_basename)
+
+    freqs_str += f"Frequency_{genome_basename}\t"
 
     # Extract all reads for the specified locations
-    combined_locations = ' '.join(locations)
-    combined_non_overlapping_regions = " ".join(non_overlapping_regions)
-    temp_sam_path = f"/tmp/{genome_basename}.sam"
-    command1 = f"(cd /mnt/proj/software && samtools view -h {genome} {combined_non_overlapping_regions} > {temp_sam_path})"
+    temp_sam_path = f"/home/b/buit/tmp/{genome_basename}.bam"
+    command1 = f"(cd /mnt/proj/software && samtools view -b -h {genome} {combined_non_overlapping_regions} > {temp_sam_path})"
     subprocess.run(command1, shell=True, check=True)
+    command_index = f"samtools sort -@ 8 {temp_sam_path} -o {temp_sam_path} && samtools index {temp_sam_path}"
+    subprocess.run(command_index, shell=True, check=True)
 
-    all_reads = extract_reads_from_sam(temp_sam_path)
-    all_reads_of_replicates[genome_basename] = all_reads
-    os.remove(f"/tmp/{genome_basename}.sam")
+    sam_dict[genome_basename] = temp_sam_path
 
     # count reads:
     read_count, filtered_out_count = count_reads(genome, combined_non_overlapping_regions)
@@ -427,6 +501,8 @@ for genome in genomes:
     reads_count.append(f"{person}:{genome_basename}\t{read_count}\t{filtered_out_count}\t{round(all_removed_reads_count/all_reads_count, 4)}\t-\n")
     reads_count.append(f"{person}:{genome_basename}\t{read_count_genome}\t{filtered_out_count_genome}\t{round(filtered_out_count_genome/read_count_genome, 4)}\t+\n")
 
+freqs.append(freqs_str)
+
 for location in locations:
     chrom, pos_range = location.split(":")
     start_pos, end_pos = map(int, pos_range.split("-"))
@@ -436,9 +512,9 @@ for location in locations:
 
     # Process reads and find variants for the current location
     type = locations_with_type[f"{chrom}:{start_pos}-{end_pos}"]
-    type_string_region = ";".join(sorted(type))
+    #type_string_region = ";".join(sorted(type))
 
-    final_bases_dict, reference_dict, seq, coverage_dict = find_consensus_base(all_reads_of_replicates, ref, location)
+    final_bases_dict, reference_dict, seq, coverage_dict, fred_dict = find_consensus_base_new(sam_dict, ref, location)
 
     for pos in sorted(final_bases_dict.keys()):
 
@@ -455,12 +531,26 @@ for location in locations:
         r = reference_dict[pos]
         p = final_bases_dict[pos]  # Final base
         c = coverage_dict[pos]  # coverage/ sequencing depth at that pos
+        f = fred_dict[pos]
         results.append(f"{person}\t{chrom}\t{pos}\t{type_string}\t{c}\t{r}\t{p}")
-    seqs.append(f"{person}\t{location}\t{type_string_region}\t{seq}")
+        freq_string = f"{person}\t{chrom}\t{pos}\t{type_string}\t{r}\t"
+        for id in genome_basename_list:
+            counter = f[id]
+            if len(counter) >0:
+                for idx, (key, value) in enumerate(counter.items()):
+                    if idx == len(counter) - 1:
+                        freq_string += f"{key}:{value}"
+                    else:
+                        freq_string += f"{key}:{value};"
+            else:
+                freq_string+="NA"
+            freq_string+="\t"
+        freqs.append(freq_string)
+    seqs.append(f"{person}\t{location}\t{seq}")
+
+print_output(output_path, results, seqs, all_special_cases)
+print_read_stats(output_path, reads_count)
 
 end_time = time.perf_counter()
 runtime = end_time - start_time
 print(f"Runtime: {runtime:.5f} seconds")
-
-print_output(output_path, results, seqs, all_special_cases)
-print_read_stats(output_path, all_reads_count, all_removed_reads_count, all_reads_count_genome, all_removed_reads_count_genome)

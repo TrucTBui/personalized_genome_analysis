@@ -6,7 +6,7 @@ import argparse
 import os
 from collections import Counter, defaultdict
 import time
-from intervaltree import IntervalTree
+from intervaltree import IntervalTree, Interval
 import re
 import pandas as pd
 import tempfile
@@ -306,14 +306,34 @@ def merge_regions(regions):
     for region in regions:
         chrom, start, end = region.split("\t")
         start, end = int(start), int(end)
-        chrom_trees[chrom][start:end] = None  # We don't need to store additional data, just the interval
+        chrom_trees[chrom][start:end] = None  # No additional data needed, just the interval
 
-    # Merge intervals and prepare the output
+    # Function to iteratively merge adjacent intervals
+    def merge_adjacent(intervals):
+        merged = []
+        for iv in intervals:
+            if merged and merged[-1][1] >= iv.begin -1:  # Merge overlapping or adjacent
+                merged[-1] = (merged[-1][0], max(merged[-1][1], iv.end))
+            else:
+                merged.append((iv.begin, iv.end))
+        return merged
+
+    # Merge overlapping and adjacent intervals
     merged_regions = []
     for chrom, tree in chrom_trees.items():
         tree.merge_overlaps()  # Merge overlapping intervals
-        for iv in sorted(tree):  # Iterate over merged intervals
-            merged_regions.append(f"{chrom}\t{iv.begin}\t{iv.end}")
+
+        # Sort and merge adjacent intervals iteratively
+        sorted_intervals = sorted(tree)
+        prev_merged = []
+        merged = merge_adjacent(sorted_intervals)
+        while prev_merged != merged:  # Keep merging until no further changes
+            prev_merged = merged
+            merged = merge_adjacent([Interval(start, end) for start, end in merged])
+
+        # Store final merged intervals
+        for start, end in merged:
+            merged_regions.append(f"{chrom}\t{start}\t{end}")
 
     return merged_regions
 
