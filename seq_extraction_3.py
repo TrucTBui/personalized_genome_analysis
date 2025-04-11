@@ -35,14 +35,14 @@ def parse_genome(path):
             genomes.append(line.strip())
     return genomes
 
-def create_mpileup(sam_file, region_bed):
+def create_mpileup(sam_file, locations):
     """
     Efficiently generates a DataFrame from a SAM file using samtools mpileup,
     writing directly to a CSV file and loading it with Pandas.
 
     Args:
         sam_file (str): Path to the SAM file.
-        region_bed (str): A bed file containing genomic region in the format "chr   start end".
+        locations (list): List of locations
 
 
     Returns:
@@ -58,17 +58,11 @@ def create_mpileup(sam_file, region_bed):
             # Open the temp file for writing results
             with open(temp_path, "w") as out_file:
                 # Open the BED file and iterate through each region
-                with open(region_bed, "r") as bed_file:
-                    for line in bed_file:
-                        line = line.strip()
-                        chromosome, start, end = line.split("\t")
-                        region = f"{chromosome}:{start}-{end}"
+                for location in locations:
+                    samtools_command = ["samtools", "mpileup", "-aa", sam_file, "-r", location]
+                    result = subprocess.check_output(samtools_command, text=True, stderr=subprocess.DEVNULL)
 
-                        # Run samtools mpileup for the current region
-                        samtools_command = ["samtools", "mpileup", "-aa", sam_file, "-r", region]
-                        result = subprocess.check_output(samtools_command, text=True, stderr=subprocess.DEVNULL)
-
-                        out_file.write(result)
+                    out_file.write(result)
 
             # Now read the results into a Pandas DataFrame
             df = pd.read_csv(temp_path, sep="\t", header=None, usecols=[0, 1, 4],
@@ -79,7 +73,7 @@ def create_mpileup(sam_file, region_bed):
             df.drop(columns=["Bases"], inplace=True)  # Remove raw bases after processing
 
         except FileNotFoundError:
-            print(f"Error: SAM file '{sam_file}' or BED file '{region_bed}' not found.")
+            print(f"Error: SAM file '{sam_file}' or BED file '{locations}' not found.")
             return pd.DataFrame(columns=["Chromosome", "Position", f"Frequency_{genome_basename}"])
         except subprocess.CalledProcessError as e:
             print(f"Error: samtools mpileup failed: {e}")
@@ -186,7 +180,7 @@ def determine_final_base(freq_counts_per_replicate):
     ratio12 = (combined_counts[most_frequent_base] + (
         combined_counts[second_frequent_base] if second_frequent_base else 0)) / total_counts
 
-    if ratio1 >= 0.75 or (total_counts < 15 and ratio1 >= 0.65):
+    if ratio1 > 0.75 or (total_counts < 15 and ratio1 >= 0.65):
         return most_frequent_base
     elif ratio12 > 0.65 and second_frequent_base:
         return f"{most_frequent_base}/{second_frequent_base}"
@@ -275,15 +269,15 @@ def transform_location_input(path):
             if not line.startswith("#"):
                 fields = line.split()
                 chromosome = fields[0]
-                type = fields[2]
+                type = fields[1]
                 #if type in {"exon", "gene", "transcript", "intron"}:
                 if type in {"exon", "gene", "transcript"}:
                     continue
 
                 if chromosome.startswith("chr"):
                     chromosome = chromosome[3:]
-                start = int(fields[3])
-                end = int(fields[4]) - 1  # End is exclusive
+                start = int(fields[2])
+                end = int(fields[3])   # End is exclusive
 
                 locations.append(f"{chromosome}\t{start}\t{end}")
 
@@ -292,11 +286,12 @@ def transform_location_input(path):
                     locations_with_type[location_string] = set()
                 locations_with_type[location_string].add(type)
     merged_locations = merge_regions(locations)
-    with open(f"{os.path.dirname(path)}/locations_transformed.bed", 'w') as w:
-        for location in merged_locations:
-            w.write(f"{location}\n")
 
-    return locations, locations_with_type
+    #with open(f"{os.path.dirname(path)}/locations_transformed.bed", 'w') as w:
+    #    for location in merged_locations:
+    #        w.write(f"{location}\n")
+
+    return merged_locations, locations_with_type
 
 
 def merge_regions(regions):
@@ -333,7 +328,7 @@ def merge_regions(regions):
 
         # Store final merged intervals
         for start, end in merged:
-            merged_regions.append(f"{chrom}\t{start}\t{end}")
+            merged_regions.append(f"{chrom}:{start}-{end}")
 
     return merged_regions
 
@@ -471,7 +466,7 @@ start_time = time.perf_counter()  # runtime measurement
 
 
 locations, locations_with_type = transform_location_input(location_path)
-region_bed = f"{os.path.dirname(location_path)}/locations_transformed.bed"
+#region_bed = f"{os.path.dirname(location_path)}/locations_transformed.bed"
 
 type_df = assign_and_merge_types(locations_with_type)
 type_df['Person'] = person
@@ -480,7 +475,7 @@ type_df = integrate_reference_bases(type_df, reference_genome=ref_path)
 genomes = parse_genome(genome_path)
 rep_df_list =[]
 for genome in genomes:
-    rep_df_list.append(create_mpileup(genome, region_bed))
+    rep_df_list.append(create_mpileup(genome, locations))
 
 rep_df_merged = merge_dataframes(rep_df_list)
 df_merged = merge_dataframes([type_df,rep_df_merged])

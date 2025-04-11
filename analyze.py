@@ -10,9 +10,11 @@ import gzip
 parser = argparse.ArgumentParser()
 
 parser.add_argument("-g", "--gene", type=str, required=True, help="which gene to analyse")
+parser.add_argument("-c", "--chromosome", type=str, required=True, help="which chromosome to analyse")
 
 args = parser.parse_args()
 gene_name = args.gene
+chromosome = args.chromosome
 
 
 def make_line_plot_cov(df, gene, output_line_plot_path, output_boxplot_path):
@@ -293,4 +295,4 @@ def run_analysis(gene_name:str, base_output_folder:str):
 
 
 
-run_analysis(gene_name, base_output_folder = "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Family")
+run_analysis(gene_name, base_output_folder = f"/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Family/{chromosome}")
