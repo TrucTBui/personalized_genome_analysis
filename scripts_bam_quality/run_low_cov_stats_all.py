@@ -1,8 +1,9 @@
 # Run all low coverage stats that in /mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/QC_BAM/Low_coverage_results
 import os
+import sys
 
 # Find all low coverage stats files in the specified directory
-directory = "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/QC_BAM/Low_coverage_results"
+directory = sys.argv[1]
 low_cov_files = []
 for root, _, files in os.walk(directory):
         for file in files:

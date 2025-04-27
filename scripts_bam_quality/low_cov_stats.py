@@ -3,6 +3,7 @@ import pandas as pd
 from collections import defaultdict
 import argparse
 import os
+import csv
 
 argparser = argparse.ArgumentParser(description="Calculate statistics for low coverage regions in a BED file.")
 argparser.add_argument("-l", "--low_cov_file", type=str, required=True, help="Path to the low coverage BED file.")
@@ -23,7 +24,7 @@ total_length_chromosome = {"1":249250621, "2":243199373, "3":198022430, "4":1911
                            "16":90354753, "17":81195210, "18":78077248, "19":59128983, "20":63025520,
                            "21":48129895, "22":51304566, "X":155270560, "Y":59373566}
 
-df = pd.read_csv("/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/QC_BAM/Low_coverage_results/heterochromoatin_annotation.txt", sep="\t")
+df = pd.read_csv(special_regions_file, sep="\t", comment='#')
 df.columns = ['bin', 'chrom', 'chromStart', 'chromEnd', 'ix', 'n', 'size', 'type', 'bridge']
 df_filtered = df[['chrom', 'chromStart', 'chromEnd', 'type']]
 df_filtered['chrom'] = df_filtered['chrom'].str.replace("^chr", "", regex=True)
@@ -38,7 +39,7 @@ special_bed = special_bed.sort().merge()
 
 # === Total stats for original low coverage regions ===
 def total_bases(bedtool_obj):
-    return sum([(int(r.end) - int(r.start) + 1) for r in bedtool_obj])
+    return sum([(int(r.end) - int(r.start)) for r in bedtool_obj])
 
 # === Filter: remove any overlapping region ===
 low_cov_filtered = low_cov_bed.intersect(special_bed, v=True)
@@ -53,17 +54,17 @@ stats_filtered = defaultdict(lambda: {"regions": 0, "bases": 0})
 
 for r in low_cov_bed:
     stats_original[r.chrom]["regions"] += 1
-    stats_original[r.chrom]["bases"] += int(r.end) - int(r.start) + 1
+    stats_original[r.chrom]["bases"] += int(r.end) - int(r.start) 
 
 for r in low_cov_filtered:
     stats_filtered[r.chrom]["regions"] += 1
-    stats_filtered[r.chrom]["bases"] += int(r.end) - int(r.start) + 1
+    stats_filtered[r.chrom]["bases"] += int(r.end) - int(r.start) 
 
 print("Output file: ", output_stat_file)
 
 with open(output_stat_file, "w") as f:
     f.write("Input bed file: " + low_cov_file + "\n")
-    f.write("Statistics for low coverage regions (coverage < 2x)\n")
+    f.write("Statistics for low coverage regions\n")
     f.write("== Overall Statistics ==\n")
     f.write(f"Total regions: {len(low_cov_bed)}\n")
     f.write(f"Total base pairs: {total_bases(low_cov_bed):,}\n")
@@ -83,10 +84,31 @@ with open(output_stat_file, "w") as f:
         f_stats = stats_filtered[chrom]
         total_len = total_length_chromosome[chrom]
         
-        heterochromatin_length = sum([int(r.end) - int(r.start) + 1 for r in special_bed if r.chrom == chrom])
+        heterochromatin_length = sum([int(r.end) - int(r.start) for r in special_bed if r.chrom == chrom])
         filtered_len = total_len - heterochromatin_length 
         
         percent_orig = 100 * o['bases'] / total_len
         percent_filt = 100 * f_stats['bases'] / filtered_len
 
         f.write(f"{chrom:<6}{o['regions']:>15,}{o['bases']:>15,}{f_stats['regions']:>15,}{f_stats['bases']:>15,}{percent_orig:12.2f}%{percent_filt:12.2f}%\n")
+
+sample_id = os.path.basename(low_cov_file).split("_")[0]  
+output_table_path = output_stat_file.replace(".txt", "_plot.tsv")
+print(output_table_path)
+with open(output_table_path, "w", newline='') as csvfile:
+    writer = csv.writer(csvfile, delimiter='\t')
+    writer.writerow(["Sample", "Chromosome", "Percent_Low_Coverage_Original", "Percent_Low_Coverage_Filtered"])
+    
+    for chrom in all_chroms:
+        if chrom not in total_length_chromosome:
+            continue
+        o = stats_original[chrom]
+        f_stats = stats_filtered[chrom]
+        total_len = total_length_chromosome[chrom]
+        heterochromatin_length = sum([int(r.end) - int(r.start) for r in special_bed if r.chrom == chrom])
+        filtered_len = total_len - heterochromatin_length 
+
+        percent_orig = 100 * o['bases'] / total_len if total_len > 0 else 0
+        percent_filt = 100 * f_stats['bases'] / filtered_len if filtered_len > 0 else 0
+
+        writer.writerow([sample_id, chrom, round(percent_orig, 2), round(percent_filt, 2)])

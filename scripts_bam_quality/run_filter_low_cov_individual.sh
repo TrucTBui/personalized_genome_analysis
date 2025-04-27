@@ -4,6 +4,7 @@
 
 input=$1
 output=$2
+threshold=${3:-2}
 
 echo "Input file: $input"
 echo "Output file: $output"
@@ -13,4 +14,4 @@ if [[ ! -f "$input" ]]; then
     exit 1
 fi
 
-zcat "$input" | awk '$4 < 2' | gzip > "$output"
+zcat "$input" | awk '$4 + 0 < '$threshold'' | gzip > "$output"
