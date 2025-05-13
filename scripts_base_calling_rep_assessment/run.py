@@ -89,7 +89,7 @@ def run_analysis(ID):
     print(f"Finished analysis for gene: {ID}")
 
 
-input_genome_folder = "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genomes"
+input_genome_folder = "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genomes/BAM"
 base_output_folder = f"/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results/{chrom}"
 
 gene_id_with_name_file = f"/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genes/gene_id_with_name/gene_id_with_name_{chunk}.txt"

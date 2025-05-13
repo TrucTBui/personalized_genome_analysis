@@ -457,7 +457,12 @@ def identify_variant_positions(df):
     Filters for variants positions from the DataFrame (Heterozygous + SNP).
     Heterozygous positions are those where the final base contains a '/'.
     """
-    variants = df[(df["Special_Case"] == "Heterozygous") | (df["Special_Case"] == "Homozygous!=Ref")]
+    chrom = df["Chromosome"].values[0]
+    person = df["Person"].values[0]
+    if person in MALES and chrom in ["Y","X"]:
+        variants = df[(df["Special_Case"] == "Homozygous!=Ref")]  
+    else:
+        variants = df[(df["Special_Case"] == "Heterozygous") | (df["Special_Case"] == "Homozygous!=Ref")]
 
 
     return variants
