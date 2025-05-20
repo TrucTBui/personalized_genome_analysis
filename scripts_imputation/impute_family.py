@@ -52,14 +52,14 @@ def impute_all():
 def merge_variants():
     # Find all files ending with variants.tsv, merge them into a df
     all_files = []
-    for person in FAMILY: # TODO: family_chromY
+    for person in FAMILY:
         file_path = os.path.join(analysis_folder, gene, person, "variants.tsv")
         if os.path.exists(file_path):
             all_files.append(file_path)
-        else:
-            print(f"File not found: {file_path}")
+        #else:
+        #    print(f"File not found: {file_path}")
     if not all_files:
-        print("No files found to merge.")
+        #print("No files found to merge.")
         return None
     df_list = []
     for file in all_files:
@@ -77,6 +77,8 @@ def merge_variants():
         return None
     merged_df = pd.concat(df_list, ignore_index=True)
     merged_df = merged_df.drop_duplicates()
+    # Sort the merged DataFrame by Chromosome, Position
+    merged_df = merged_df.sort_values(by=["Chromosome", "Position"])
     merged_df = merged_df.reset_index(drop=True)
     return merged_df
 

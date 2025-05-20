@@ -53,7 +53,7 @@ def get_pangenomic_analysis(pangenome_dir, gene_id):
     
     gene_file = os.path.join(pangenome_dir, f"{gene_id}_pangenome_analysis_lifted.bed")
     if not os.path.exists(gene_file):
-        print(f"Pangenome analysis for gene {gene_file} does not exist.")
+        #print(f"Pangenome analysis for gene {gene_file} does not exist.")
         return None
     
     # Load the bed file
@@ -99,6 +99,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
         # Extract the ambiguos position information
         ambiguous_position = ambiguous_positions_df.loc[ambiguous_positions_df["Position"] == position]
         ref = ambiguous_position["Reference_Base"].values[0]
+        geno_ref = f"{ref}/{ref}"
         individual = ambiguous_position["Person"].values[0]
         consistency_check = ambiguous_position["Consistency"].values[0]
         sex_special_cases = individual in MALES and (chrom =="chrX" or chrom == "chrY")
@@ -276,7 +277,6 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
 
         
         if check_ref:
-            geno_ref = f"{ref}/{ref}"
             if geno_ref not in possible_genotypes_with_score:
                 possible_genotypes_with_score[geno_ref] = {'score': 0.3, 'method':{"reference"}}
             else:
@@ -319,7 +319,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                                 possible_genotypes_with_score[geno_alt_homo] = {'score': factor, 'method':{"pangenome"}}
                             else:
                                 possible_genotypes_with_score[geno_alt_homo]['score'] += factor
-                                possible_genotypes_with_score[geno_ref]['method'].add("pangenome")
+                                possible_genotypes_with_score[geno_alt_homo]['method'].add("pangenome")
                             if geno_mix not in possible_genotypes_with_score:
                                 possible_genotypes_with_score[geno_mix] = {'score': factor, 'method':{"pangenome"}}
                             else:   
@@ -334,7 +334,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
             # If the directly previous position is a deletion, then the current position has a probability of being a deletion too if it has no counts
             prev = position - 1
             if prev in ambiguous_positions and consistency_check == "no_counts" and (resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == prev, "Special_Case"] == "Deletion").any() and "pangenome" not in possible_genotypes_with_score["D"]['method']:
-                    possible_genotypes_with_score["D"]['score'] += 0.8
+                    possible_genotypes_with_score["D"]['score'] += 1.1
                     possible_genotypes_with_score["D"]['method'].add("propagation")
 
         # Integrate the genotype determination of the individual in case of inconsistency
@@ -405,7 +405,7 @@ def propagate_positions_before_deletion(resolved_ambiguous_positions_df):
             if df.at[i, "Consistency"] == "no_counts":
                 df.at[i, "Special_Case"] = "Deletion"
                 df.at[i, "Final_Base"] = "D"
-                df.at[i, "Imputation"] = "0.8|propagation"
+                df.at[i, "Imputation"] = "1.1|propagation"
                 current_pos = prev_pos
                 i -= 1
             else:
@@ -452,13 +452,28 @@ def infer_inputed_genotype(possible_genotypes_with_score, ref):
 
                         
 def process_imputed_positions(imputed_positions_df, variants_df):
+    #print (ambiguous_file)
 
+    variants_df = variants_df.drop_duplicates(subset=["Chromosome", "Position"], keep="first")
+    #print(f"Variants df shape: {variants_df.shape}")
     # Get the subset of the imputed positions that have "Heterozygous" or "Homozygous!=Ref" in the Special_Case column
     imputed_positions_df_subset = imputed_positions_df.loc[imputed_positions_df["Special_Case"].isin(["Heterozygous", "Homozygous!=Ref", "Deletion"])]
-    # Add them to the variants_df. Before they are not in the variants_df
+    #print("Imputed subset positions:", imputed_positions_df_subset["Position"].tolist())
+    #print("Variants positions:", variants_df["Position"].tolist())
+
+    # Remove from the variants df the positions that are already in the imputed positions df
+    variants_df = variants_df.loc[~variants_df["Position"].isin(imputed_positions_df["Position"])]
+    #print(f"New variants df shape: {variants_df.shape}")
+
     new_variants_df = pd.concat([variants_df, imputed_positions_df_subset], ignore_index=True)
     # Sort the new_variants_df by Chromosome and Position
     new_variants_df = new_variants_df.sort_values(by=["Chromosome", "Position"])
+
+    # If there is a Deletion in Special_Case, print the gene, and the person
+    if "Deletion" in new_variants_df["Special_Case"].values:
+        gene = new_variants_df["Gene"].values[0]
+        person = new_variants_df["Person"].values[0]
+        print(f"Deletion\t{gene}\t{person}")
 
     return new_variants_df
 
