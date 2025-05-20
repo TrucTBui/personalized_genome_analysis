@@ -65,7 +65,7 @@ def create_mpileup(sam_file, locations):
             with open(temp_path, "w") as out_file:
                 # Open the BED file and iterate through each region
                 for location in locations:
-                    samtools_command = ["samtools", "mpileup", "-q 1" , "-aa", sam_file, "-r", location]
+                    samtools_command = ["samtools", "mpileup", "-aa", sam_file, "-r", location]
                     result = subprocess.check_output(samtools_command, text=True, stderr=subprocess.DEVNULL)
 
                     out_file.write(result)

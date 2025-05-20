@@ -1,16 +1,17 @@
 #!/bin/bash
 
 LOGDIR="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_base_calling_rep_assessment/logs"
-CHUNKFILE="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/chunk_list_Y.txt"
+CHUNKFILE="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/chunk_list.txt"
 SCRIPT="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_base_calling_rep_assessment/run_chunk.sh"
 
-rm -f "$LOGDIR"/run_*.out "$LOGDIR"/run_*.err
 total_lines=$(wc -l < "$CHUNKFILE")
 dell_q_end=73
 dell256_q_end=$((73 + 39))  # 112
 count=0
 
 while IFS= read -r chunk; do
+    rm -f "$LOGDIR"/run_$chunk.out "$LOGDIR"/run_$chunk.err
+
     if (( count < dell_q_end )); then
         queue="dell.q"
     elif (( count < dell256_q_end )); then
