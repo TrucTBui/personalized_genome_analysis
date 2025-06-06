@@ -65,18 +65,22 @@ def create_mpileup(sam_file, locations):
             with open(temp_path, "w") as out_file:
                 # Open the BED file and iterate through each region
                 for location in locations:
-                    samtools_command = ["samtools", "mpileup", "-aa", sam_file, "-r", location]
+                    samtools_command = ["samtools", "mpileup", "-aa", "-B" , sam_file, "-r", location, "-f", ref_path]
                     result = subprocess.check_output(samtools_command, text=True, stderr=subprocess.DEVNULL)
 
                     out_file.write(result)
 
             # Now read the results into a Pandas DataFrame
-            df = pd.read_csv(temp_path, sep="\t", header=None, usecols=[0, 1, 4],
-                             names=["Chromosome", "Position", "Bases"])
+            df = pd.read_csv(temp_path, sep="\t", header=None, usecols=[0, 1, 2, 4],
+                             names=["Chromosome", "Position", "ReferenceBase" , "Bases"])
 
-            # Apply parsing function (assuming `format_frequencies` is defined)
-            df[f"Frequency_{genome_basename}"] = df["Bases"].apply(lambda x: format_frequencies(x))
-            df.drop(columns=["Bases"], inplace=True)  # Remove raw bases after processing
+            # Apply parsing function, use the ReferenceBase to get the reference base
+            df[f"Frequency"] = df.apply(lambda row: parse_mpileup_bases(row["Bases"], row["ReferenceBase"]), axis=1)
+            # Format the frequencies to dictionary format
+            df[f"Frequency_{genome_basename}"] = df[f"Frequency"].apply(count_frequencies)
+            # Annotate the deletions
+            df = annotate_deletions(df, genome_basename)
+            df.drop(columns=["ReferenceBase","Bases", "Frequency"], inplace=True)  # Remove raw bases after processing
 
         except FileNotFoundError:
             print(f"Error: SAM file '{sam_file}' or BED file '{locations}' not found.")
@@ -92,18 +96,96 @@ def create_mpileup(sam_file, locations):
 
     return df
 
-def format_frequencies(bases):
+def count_frequencies(bases):
+    # Count the occurrences of each base and return dictionary in the format "base:count"
+    if not bases:
+        return {}
+    allele_count={}
+    for base in bases:
+        if base in allele_count:
+            allele_count[base] += 1
+        else:
+            allele_count[base] = 1
+    return allele_count
+
+def format_frequencies(frequencies):
     """
-    Parses bases, computes base frequencies, and formats them as 'A:3;T:2' strings.
+    Formats the frequencies dictionary to a string representation.
     """
-    counter = Counter(parse_mpileup_bases(bases))
-    if len(counter) > 0:
-        return ";".join(f"{key}:{value}" for key, value in counter.items())
-    else:
+    if not frequencies:
         return "NA"
+    formatted = []
+    for base, count in frequencies.items():
+            formatted.append(f"{base}:{count}")
+    return ";".join(formatted)
+
+def annotate_deletions(df, genome_basename):
+    # Go through each row and annotate deletions in the Frequency column. 
+    # If there is a "-" in the Frequency column, it means there is a deletion.
+    # Add "D" to the Frequency column(s) that contain deletions.
+    freq_col_name = f"Frequency_{genome_basename}"
+    if freq_col_name not in df.columns:
+        print(f"Warning: Frequency column '{freq_col_name}' not found. Skipping deletion marking.")
+        return df
+
+    deleted_genomic_positions = {}
+    anchor_positions = set()  # To track anchor positions
+
+    # Identify all genomic sites that are deleted based on anchor base reports
+    for index, row in df.iterrows():
+        # anchor_pos is the reference position *before* the deleted bases
+        anchor_pos = row['Position'] 
+        
+        frequency_data = row[freq_col_name]
+        #print(frequency_data)
+        
+        # Skip if frequency_data is not a dictionary (e.g., already 'NA' or 'D')
+        if not isinstance(frequency_data, dict):
+            continue
+
+        for event_key in frequency_data.keys():
+            if event_key.startswith('-'):
+                #print(event_key)
+                # event_key is like "-GCA" (meaning GCA deleted *after* anchor_pos)
+                deleted_sequence = event_key[1:] # e.g., "GCA"
+                deletion_length = len(deleted_sequence)
+                anchor_positions.add(anchor_pos)  # Add anchor position to the set
+
+                # Determine the genomic positions of the deleted bases
+                for i in range(deletion_length):
+                    # The first deleted base is at anchor_pos + 1, second at anchor_pos + 2, etc.
+                    deleted_ref_pos = anchor_pos + 1 + i
+                    if deleted_ref_pos not in deleted_genomic_positions:
+                        deleted_genomic_positions[deleted_ref_pos] = frequency_data[event_key]
+                    else:
+                        deleted_genomic_positions[deleted_ref_pos] += frequency_data[event_key]
 
 
-def parse_mpileup_bases(bases):
+    for idx in df.index: # Use df.index to iterate over indices
+        current_pos = df.loc[idx, 'Position']
+        if current_pos in deleted_genomic_positions:
+            # Add "D" to the Frequency column dictionary with the number of occurrences of the deletion
+            current_dict = df.at[idx, freq_col_name]
+            if isinstance(current_dict, dict):
+                current_dict["D"] = deleted_genomic_positions[current_pos]
+            df.at[idx, freq_col_name] = current_dict
+            #print(df.at[idx, freq_col_name])
+    
+    for anchor_pos in anchor_positions:
+        anchor_index = df[df['Position'] == anchor_pos].index[0]
+        current_dict = df.at[anchor_index, freq_col_name]
+        # Delete all the entries starting with "-" from the row of anchor positions
+        if isinstance(current_dict, dict):
+            # Remove all keys that start with "-"
+            keys_to_remove = [key for key in current_dict.keys() if key.startswith('-')]
+            for key in keys_to_remove:
+                del current_dict[key]
+
+            
+    return df
+
+
+def parse_mpileup_bases(bases, ref):
     """
     Parses the base string from samtools mpileup, including indels.
 
@@ -116,9 +198,13 @@ def parse_mpileup_bases(bases):
     parsed_bases = []
     i = 0
     while i < len(bases):
-        base = bases[i]
+        base = bases[i]        
         # Match standard bases
-        if base in "ATCGatcg":
+        if base in ['.', ',']:  # matches to the reference
+            # Append reference base
+            parsed_bases.append(ref)
+            i += 1
+        elif base in 'ATCGatcg': 
             parsed_bases.append(base.upper())
             i += 1
         # Match insertions (+n[ATCG...])
@@ -127,25 +213,30 @@ def parse_mpileup_bases(bases):
             if match:
                 length = int(match.group(1))
                 insertion = match.group(2)[:length].upper() # extract only the number of letters specified by the number
-                #parsed_bases.append(f"+{insertion}")
+                parsed_bases.append(f"{ref}{insertion}")
+                # extract the base right before the insertion
+                last_base = bases[i-1].upper() if i > 0 else None
+                #print(last_base)
+                #if last_base and last_base in ['.', ',']:
+                #    parsed_bases.remove(ref)
                 i += len(match.group(1)) + length + 1 #increment by the length of the number, the insertion, and the + sign.
+
             else:
                 i += 1  # handle unexpected +
+            
         # Match deletions (-n[ATCG...])
         elif base == '-':
             match = re.match(r'\-(\d+)([ATCGNatcgn]+)', bases[i:])
             if match:
                 length = int(match.group(1))
                 deletion = match.group(2)[:length].upper() #extract only the number of letters specified by the number
-                #parsed_bases.append(f"-{deletion}")
+                parsed_bases.append(f"-{deletion}")
                 i += len(match.group(1)) + length + 1 #increment by the length of the number, the deletion, and the - sign.
             else:
                 i += 1  # handle unexpected -
-        # match ^ and $ which are read quality and end of read symbols.
-        elif base == '^' or base == '$':
-            i += 1
         else:
             i += 1  # handle other characters
+    #print(parsed_bases)    
     return parsed_bases
 
 
@@ -188,7 +279,7 @@ def determine_final_base(freq_counts_per_replicate):
     ratio12 = (combined_counts[most_frequent_base] + (
         combined_counts[second_frequent_base] if second_frequent_base else 0)) / total_counts
 
-    if ratio1 > 0.75 or (total_counts < 15 and ratio1 >= 0.65):
+    if (total_counts > 50 and ratio1 > 0.85) or (total_counts <= 50 and total_counts > 15 and ratio1 > 0.8) or (total_counts <= 15 and ratio1 >= 0.75):
         return most_frequent_base
     elif ratio12 > 0.70 and second_frequent_base:
         return f"{most_frequent_base}/{second_frequent_base}"
@@ -198,8 +289,8 @@ def determine_final_base(freq_counts_per_replicate):
 
 def evaluate_consistency(freq_counts_per_replicate):
     # Check for any empty replicate counts
-    if any(len(replicate_counts) == 0 for replicate_counts in freq_counts_per_replicate):
-        return "no_counts"
+    #if any(len(replicate_counts) == 0 for replicate_counts in freq_counts_per_replicate):
+    #    return "no_counts"
 
     major_alleles_per_replicate = []
     total_counts = 0
@@ -251,10 +342,8 @@ def process_replicates(df):
                 continue
 
             replicate_counts = {}
-            for allele in freq.split(";"):
-                if allele:
-                    base, count = allele.split(":")
-                    replicate_counts[base] = int(count)
+            for allele, count in dict(freq).items():
+                replicate_counts[allele] = int(count)
             freq_counts_per_replicate.append(replicate_counts)
 
         final_bases.append(determine_final_base(freq_counts_per_replicate))
@@ -418,18 +507,25 @@ def identify_special_cases(df):
 
     # Create a new column to flag special cases
     def check_special_case(row):
-        special_case = None
+        special_case = []
 
         if "/" in row["Final_Base"]:
-            special_case = "Heterozygous"
+            special_case.append("Heterozygous")
         else:
             if row["Final_Base"] == "N":
-                special_case = "Unknown_Base"
+                special_case.append("Unknown_Base")
             elif row["Final_Base"] != row["Reference_Base"]:
-                special_case = "Homozygous!=Ref"
+                special_case.append("Homozygous!=Ref")
+
+        if "D" in row["Final_Base"]:
+            special_case.append("Deletion")
+        bases = row["Final_Base"].split("/")
+        # if there is a base longer than 1, it is an insertion
+        if any(len(base) > 1 for base in bases):
+            special_case.append("Insertion")
 
 
-        return special_case if special_case else "-"
+        return ";".join(special_case) if special_case else "-"
 
     # Apply the function to the DataFrame
     df["Special_Case"] = df.apply(check_special_case, axis=1)
@@ -459,13 +555,24 @@ def identify_variant_positions(df):
     """
     chrom = df["Chromosome"].values[0]
     person = df["Person"].values[0]
+
     if person in MALES and chrom in ["Y","X"]:
-        variants = df[(df["Special_Case"] == "Homozygous!=Ref")]  
+        variant_cases = ["Homozygous!=Ref", "Insertion", "Deletion"]
     else:
-        variants = df[(df["Special_Case"] == "Heterozygous") | (df["Special_Case"] == "Homozygous!=Ref")]
+        variant_cases = ["Heterozygous", "Homozygous!=Ref", "Insertion", "Deletion"]
 
+    escaped_patterns = [re.escape(p) for p in variant_cases]
+    regex_pattern = '|'.join(escaped_patterns)
+    
+    not_na_mask = df["Special_Case"].notna()
+    
+    combined_conditions = pd.Series(False, index=df.index)
 
-    return variants
+    if not_na_mask.any():
+        relevant_series = df.loc[not_na_mask, "Special_Case"].astype(str)
+        combined_conditions.loc[not_na_mask] = relevant_series.str.contains(regex_pattern, regex=True)
+            
+    return df[combined_conditions]
 
 def compute_stats(df, output_file):
     # Total number of positions
@@ -598,13 +705,20 @@ rep_df_merged = merge_dataframes(rep_df_list)
 df_merged = merge_dataframes([type_df,rep_df_merged])
 result = process_replicates(df_merged)
 result = identify_special_cases(result)
+# Format all Frequency columns to string representation
+freq_columns = result.filter(regex='^Frequency').columns
+for col in freq_columns:
+    result[col] = result[col].apply(format_frequencies)
 
 ambiguous_positions = identify_ambigious_positions(result)
 if not ambiguous_positions.empty:
     ambiguous_positions.to_csv(f"{output_path}/ambiguous_positions.tsv", sep="\t", index=False)
-#else:
-#    with open(f"{output_path}/ambiguous_positions.tsv", "w") as f:
-#        f.write("#No ambiguous positions found.\n")
+else:
+    # If the ambiguous positions file exists, delete it
+    ambiguous_file_path = f"{output_path}/ambiguous_positions.tsv"
+    if os.path.exists(ambiguous_file_path):
+        os.remove(ambiguous_file_path)
+
 
 variants_positions = identify_variant_positions(result)
 if not variants_positions.empty:
