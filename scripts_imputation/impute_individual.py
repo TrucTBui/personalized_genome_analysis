@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 import argparse
+import re
 
 parser = argparse.ArgumentParser(description="Impute genotype for an individual based on family genotypes and pangenomic analysis.")
 parser.add_argument("-a","--ambiguous", type=str, required=True, help="Path to the ambiguous positions file.")
@@ -12,6 +13,7 @@ pangenome_dir = args.pangenome_dir
 family_table_file = args.family
 imputed_file = os.path.join(os.path.dirname(ambiguous_file), "imputed_ambiguous_positions.tsv")
 variant_file = os.path.join(os.path.dirname(ambiguous_file), "variants.tsv")
+results_zip_file = os.path.join(os.path.dirname(ambiguous_file), "results.tsv.gz")
 # /mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results/chr3/ENSG00000007402/aunt/ambiguous_positions.tsv
 chrom = ambiguous_file.split("/")[-4]
 
@@ -95,7 +97,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
         check_ref = True
 
         possible_genotypes_with_score = {}
-        possible_genotypes_with_score["D"] = {'score': 0.0, 'method':set()}
+        possible_genotypes_with_score["D/D"] = {'score': 0.0, 'method':set()}
         # Extract the ambiguos position information
         ambiguous_position = ambiguous_positions_df.loc[ambiguous_positions_df["Position"] == position]
         ref = ambiguous_position["Reference_Base"].values[0]
@@ -133,18 +135,20 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                         # If the chromosome is Y, then only check the father
                         if parents[1] is not None:
                             father_genotype = family_current_pos_df[parents[1]]
-                            if father_genotype not in ["N","D"]:
+                            if father_genotype not in ["N"]:
                                 check_ref = False
                                 p1_alleles = sorted(father_genotype.split('/'))  
                                 if len(p1_alleles) == 1:  # Otherwise something is wrong since there is only one copy of Y
                                     # The "/" is only temporary, it will be removed later in the infer_inputed_genotype function
-                                    possible_genotypes_with_score[f"{p1_alleles[0]}/{p1_alleles[0]}"] = {'score':1.0, 'method':{"family"}}  
+                                    possible_genotypes_with_score[f"{p1_alleles[0]}/{p1_alleles[0]}"] = {'score':1.0, 'method':{"family"}}
+                                else: # take the reference allele
+                                    possible_genotypes_with_score[geno_ref] = {'score':0.5, 'method':{"reference"}}
 
                     elif chrom == "chrX":
                         # If the chromosome is X, then check the mother, since the mother is the one that can pass the X chromosome
                         if parents[0] is not None:
                             mother_genotype = family_current_pos_df[parents[0]]
-                            if mother_genotype not in ["N","D"]:
+                            if mother_genotype not in ["N"]:
                                 check_ref = False
                                 p1_alleles = sorted(mother_genotype.split('/'))
                                 # The "/" is only temporary, it will be removed later in the infer_inputed_genotype function  
@@ -153,7 +157,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                                 else: # 50% of each allele
                                     possible_genotypes_with_score[f"{p1_alleles[1]}/{p1_alleles[1]}"] = {'score':0.5, 'method':{"family"}}
                                     possible_genotypes_with_score[f"{p1_alleles[0]}/{p1_alleles[0]}"] = {'score':0.5, 'method':{"family"}}
-                else:
+                else:  # Non-sex chromosome cases
 
                     # Check if the individual has parents
                     if parents[0] is not None and parents[1] is not None:
@@ -161,7 +165,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                         mother_genotype = family_current_pos_df[parents[0]]
                         
                         # Check if both the parents have genotypes
-                        if not (father_genotype in ["N","D"] or mother_genotype in ["N","D"]):  # Best case, confidence factor = 1.0 
+                        if not (mother_genotype == 'N' or father_genotype == 'N'):  # Best case, confidence factor = 1.0
                             check_children = False
                             check_siblings = False
                             check_ref = False
@@ -211,16 +215,16 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                                 possible_genotypes_with_score[f"{homozygous_genotype}/{heterozygous_genotype[0]}"] = {'score': 0.5 * factor, 'method':{"family"}}
                                 possible_genotypes_with_score[f"{homozygous_genotype}/{heterozygous_genotype[1]}"] = {'score': 0.5 * factor, 'method':{"family"}}
 
-                        # If both parents are missing (N), then either they experience sequencing error, or there is actually an indel (insertion)
+                        # If both parents are missing (N), then either they experience sequencing error, or there is actually a gap
                         # In this case, the indel hypothesis is very probable
                         elif father_genotype == "N" and mother_genotype == "N":
                             if consistency_check == "no_counts": #TODO: review this threshold
-                                possible_genotypes_with_score["D"]['score'] += 0.4 
-                                possible_genotypes_with_score["D"]['method'].add("family")
+                                possible_genotypes_with_score["D/D"]['score'] += 0.3 
+                                possible_genotypes_with_score["D/D"]['method'].add("family")
 
                         # Both parents have deletion
-                        elif father_genotype == "D" and mother_genotype == "D":
-                            possible_genotypes_with_score["D"] = {'score': 1.0, 'method':{"family"}}
+                        #elif father_genotype == "D" and mother_genotype == "D":
+                        #    possible_genotypes_with_score["D"] = {'score': 1.0, 'method':{"family"}}
                         
                         # If one parent is missing (N), then either that parent experiences sequencing error, or there is actually an indel (deletion)
                         else: 
@@ -238,8 +242,8 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                             
                             # If a parent has N and the child also has N, then there is a probability that the child has deletion
                             if consistency_check == "no_counts": #TODO: review this threshold
-                                possible_genotypes_with_score["D"]['score'] += 0.2
-                                possible_genotypes_with_score["D"]['method'].add("family")
+                                possible_genotypes_with_score["D/D"]['score'] += 0.2
+                                possible_genotypes_with_score["D/D"]['method'].add("family")
                     
                     # Check siblings
                     if check_siblings:
@@ -327,15 +331,15 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
                                 possible_genotypes_with_score[geno_mix]['method'].add("pangenome")
                     elif variant_type.lower() == "deletion" and consistency_check == "no_counts":  
                         # If the ambiguous position also has no counts, then very likely that it is deletion
-                        if "pangenome" not in possible_genotypes_with_score["D"]['method']:
-                            possible_genotypes_with_score["D"]['score'] += 1.1
-                            possible_genotypes_with_score["D"]['method'].add("pangenome")
-        
+                        if "pangenome" not in possible_genotypes_with_score["D/D"]['method']:
+                            possible_genotypes_with_score["D/D"]['score'] += 1.1
+                            possible_genotypes_with_score["D/D"]['method'].add("pangenome")
+
             # If the directly previous position is a deletion, then the current position has a probability of being a deletion too if it has no counts
             prev = position - 1
-            if prev in ambiguous_positions and consistency_check == "no_counts" and (resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == prev, "Special_Case"] == "Deletion").any() and "pangenome" not in possible_genotypes_with_score["D"]['method']:
-                    possible_genotypes_with_score["D"]['score'] += 1.1
-                    possible_genotypes_with_score["D"]['method'].add("propagation")
+            if prev in ambiguous_positions and consistency_check == "no_counts" and (resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == prev, "Special_Case"] == "Deletion").any() and "pangenome" not in possible_genotypes_with_score["D/D"]['method']:
+                    possible_genotypes_with_score["D/D"]['score'] += 1.1
+                    possible_genotypes_with_score["D/D"]['method'].add("propagation")
 
         # Integrate the genotype determination of the individual in case of inconsistency
         if consistency_check == "inconsistent":
@@ -366,15 +370,17 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
             #family_genotype_table.loc[family_genotype_table["Position"] == position, individual] = inferred_genotype
 
             # Change the "special_case" columns
-            if inferred_genotype == "D":
-                resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == position, "Special_Case"] = "Deletion"
-            elif "/" in inferred_genotype:
-                resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == position, "Special_Case"] = "Heterozygous"
+            special_cases = []
+            if "D" in inferred_genotype:
+                special_cases.append("Deletion")
+            if "/" in inferred_genotype:
+                special_cases.append("Heterozygous")
             else:
                 if inferred_genotype != ref:
-                    resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == position, "Special_Case"] = "Homozygous!=Ref"
+                    special_cases.append("Homozygous!=Ref")
                 else:
-                    resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == position, "Special_Case"] = "-"
+                    special_cases.append("-")
+            resolved_ambiguous_positions_df.loc[resolved_ambiguous_positions_df["Position"] == position, "Special_Case"] = ";".join(special_cases)
     resolved_ambiguous_positions_df = propagate_positions_before_deletion(resolved_ambiguous_positions_df)
 
     return resolved_ambiguous_positions_df
@@ -387,7 +393,7 @@ def propagate_positions_before_deletion(resolved_ambiguous_positions_df):
     df = resolved_ambiguous_positions_df.copy()
     df = df.sort_values("Position").reset_index(drop=True)
 
-    deletion_indices = df.index[df["Special_Case"] == "Deletion"].tolist()
+    deletion_indices = df.index[df["Special_Case"].str.contains("Deletion", na=False)].tolist()
 
     for deletion_idx in deletion_indices:
         current_pos = df.at[deletion_idx, "Position"]
@@ -399,11 +405,11 @@ def propagate_positions_before_deletion(resolved_ambiguous_positions_df):
             if current_pos - prev_pos != 1:
                 break
 
-            if df.at[i, "Special_Case"] == "Deletion":
+            if "Deletion" in df.at[i, "Special_Case"]:
                 break  # already a deletion, stop
 
             if df.at[i, "Consistency"] == "no_counts":
-                df.at[i, "Special_Case"] = "Deletion"
+                df.at[i, "Special_Case"] = "Deletion;Homozygous!=Ref"
                 df.at[i, "Final_Base"] = "D"
                 df.at[i, "Imputation"] = "1.1|propagation"
                 current_pos = prev_pos
@@ -450,7 +456,51 @@ def infer_inputed_genotype(possible_genotypes_with_score, ref):
     
     return return_geno, best_score, method
 
-                        
+def update_results_zip_file(imputed_table, results_zip_file):
+    # read the existing results to a pd dataframe, header is the first row
+    results_df = pd.read_csv(results_zip_file, compression='gzip', header=0)
+    # Add the Imputation column to the results_df
+    results_df["Imputation"] = "-"
+    # Iterate over the imputed_table and update the results_df
+    for index, row in imputed_table.iterrows():
+        position = row["Position"]
+        imputation = row["Imputation"]
+        final_base = row["Final_Base"]
+        special_case = row["Special_Case"]
+        # Update the results_df with the imputation
+        results_df.loc[results_df["Position"] == position, "Imputation"] = imputation
+        results_df.loc[results_df["Position"] == position, "Final_Base"] = final_base
+        results_df.loc[results_df["Position"] == position, "Special_Case"] = special_case
+    # Save the updated results_df back to the results file. Zip it
+    results_df.to_csv(results_zip_file, index=False, compression='gzip')
+    return results_df
+
+def identify_variant_positions(df):
+    """
+    Filters for variants positions from the DataFrame (Heterozygous + SNP).
+    Heterozygous positions are those where the final base contains a '/'.
+    """
+    chrom = df["Chromosome"].values[0]
+    person = df["Person"].values[0]
+
+    if person in MALES and chrom in ["Y","X"]:
+        variant_cases = ["Homozygous!=Ref", "Insertion", "Deletion"]
+    else:
+        variant_cases = ["Heterozygous", "Homozygous!=Ref", "Insertion", "Deletion"]
+
+    escaped_patterns = [re.escape(p) for p in variant_cases]
+    regex_pattern = '|'.join(escaped_patterns)
+    
+    not_na_mask = df["Special_Case"].notna()
+    
+    combined_conditions = pd.Series(False, index=df.index)
+
+    if not_na_mask.any():
+        relevant_series = df.loc[not_na_mask, "Special_Case"].astype(str)
+        combined_conditions.loc[not_na_mask] = relevant_series.str.contains(regex_pattern, regex=True)
+            
+    return df[combined_conditions]
+"""
 def process_imputed_positions(imputed_positions_df, variants_df):
     #print (ambiguous_file)
 
@@ -477,7 +527,7 @@ def process_imputed_positions(imputed_positions_df, variants_df):
 
     return new_variants_df
 
-    
+"""   
 
 if __name__ == "__main__":
     
@@ -499,7 +549,15 @@ if __name__ == "__main__":
     imputed_table =  impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genotype_table)
     imputed_table.fillna("NA", inplace=True)
     imputed_table.to_csv(imputed_file, sep="\t", index=False)
-    
+
+    updated_results_df = update_results_zip_file(imputed_table, results_zip_file)
+    updated_results_df.fillna("NA", inplace=True)
+
+    updated_variants_df = identify_variant_positions(updated_results_df)
+    #updated_variants_df.fillna("NA", inplace=True)
+    updated_variants_df.to_csv(os.path.join(os.path.dirname(ambiguous_file), "variants.tsv"), sep="\t", index=False)
+
+    """
     variants_df = get_variant_table(variant_file)
     if not variants_df.empty:
         variants_df['Imputation'] = "-"
@@ -508,6 +566,7 @@ if __name__ == "__main__":
         #print(new_variants_df.columns)
         new_variants_df.fillna("NA", inplace=True)
         new_variants_df.to_csv(os.path.join(os.path.dirname(ambiguous_file), "variants.tsv"), sep="\t", index=False)
+    """
 
             
 
