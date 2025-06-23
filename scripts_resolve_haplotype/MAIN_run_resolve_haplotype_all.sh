@@ -1,8 +1,8 @@
 #!/bin/bash
 
-LOGDIR="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_imputation/logs"
-CHUNKFILE="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/chunk_list_fix.txt"
-SCRIPT="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_imputation/run_imputation_chunk.py"
+LOGDIR="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_resolve_haplotype/logs"
+CHUNKFILE="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/chunk_list.txt"
+SCRIPT="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_resolve_haplotype/run_resolve_haplotype_family.py"
 
 #rm -f "$LOGDIR"/run_*.out "$LOGDIR"/run_*.err
 total_lines=$(wc -l < "$CHUNKFILE")
@@ -23,7 +23,7 @@ while IFS= read -r chunk; do
 
     echo "Submitting $chunk to $queue"
 
-    qsub -N impute-$chunk -b y -q "$queue" \
+    qsub -N hap-$chunk -b y -q "$queue" \
         -o "$LOGDIR/run_$chunk.out" \
         -e "$LOGDIR/run_$chunk.err" \
         -l vf=0.5G \

@@ -7,7 +7,13 @@ fi
 source /etc/sge.sh
 
 # Filter out low coverage regions (running on Grid Engine)
-/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_bam_quality/run_filter_low_cov_all.sh "$threshold"
+# If the results are already there, skip the filtering
+if [ -d "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/QC_BAM/Low_coverage_results/threshold_$threshold" ]; then
+    echo "Low coverage results for threshold $threshold already exist. Skipping filtering."
+else
+    /mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_bam_quality/run_filter_low_cov_all.sh "$threshold"
+fi
+
 
 # Produce stattistics and plots
 output_dir="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/QC_BAM/Low_coverage_results/threshold_$threshold"

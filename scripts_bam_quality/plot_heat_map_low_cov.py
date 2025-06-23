@@ -24,7 +24,7 @@ pivot = pivot.reindex(chrom_order)
 
 # Plot heatmap
 plt.figure(figsize=(12, 8))
-sns.heatmap(pivot, cmap="YlOrRd", annot=True, vmax = 3 , fmt=".1f", linewidths=0.5, cbar_kws={'label': '% Low Coverage'})
+sns.heatmap(pivot, cmap="YlOrRd", annot=True, vmax = 3 , fmt="g", linewidths=0.5, cbar_kws={'label': '% Low Coverage'})
 plt.title(args.title)
 plt.xticks(rotation=45, ha="right")
 plt.xlabel("Sample")

@@ -111,12 +111,6 @@ def transform_pivot_variants(merged_df):
             pivoted_df[person] = pivoted_df[person].fillna(pivoted_df["Reference_Base"])
         final_columns = base_columns + MALES
         pivoted_df = pivoted_df[final_columns]
-    
-    # If "D" is in ALL person columns, then print "DeletionAll\tGene"
-    for row in pivoted_df.iterrows():
-        if all(row[person] == "D" for person in person_cols):
-            print(f"DelAll\t{gene}")
-            break
 
     return pivoted_df
 

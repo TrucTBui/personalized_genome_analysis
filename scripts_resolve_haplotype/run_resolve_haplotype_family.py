@@ -11,8 +11,8 @@ FAMILY = [
 ]
 
 FAMILY_MALE = ["grandfather_father", "father", "child", "grandfather_mother"]
-argparser = argparse.ArgumentParser(description="Call variants for a family of samples.")
-argparser.add_argument("-c","--chunk", type=str, help="Chunk to call variants for.")
+argparser = argparse.ArgumentParser(description="Resolve haplotypes from BAM files based on heterozygous positions for all samples")
+argparser.add_argument("-c","--chunk", type=str, help="Chunk to process")
 
 
 args = argparser.parse_args()
@@ -20,7 +20,7 @@ chunk = args.chunk
 
 chrom = chunk.split("_")[0]
 analysis_folder = f"/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results/{chrom}/"
-#input_genome_vcf_folder = "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genomes/VCF"
+input_genome_bam_folder = "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genomes/BAM"
 gene_id_with_name_file = f"/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genes/gene_id_with_name/gene_id_with_name_{chunk}.txt"
 
 def get_gene_id_and_name_dict(gene_id_with_name_file):
@@ -43,27 +43,27 @@ def get_gene_id_and_name_dict(gene_id_with_name_file):
         print(f"Error: Gene list file not found: {gene_id_with_name_file}")
     return gene_dict
 
-def run_variant_calling(gene, person):
-    #input_vcf = os.path.join(input_genome_vcf_folder, f"{person}.txt")
-    output_folder = os.path.join(analysis_folder, gene, person)
+def run_resolve_haplotype(gene, person):
+    input_bam = os.path.join(input_genome_bam_folder, f"{person}.txt")
+    person_analysis_folder = os.path.join(analysis_folder, gene, person)
     
-    cmd = ["/home/b/buit/miniconda3/envs/HiWi/bin/python", "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_variant_calling/variant_calling_individual.py",
-            #"-v", input_vcf,
-            #"-o", output_folder,
-            "-i", os.path.join(analysis_folder, gene, person, "variants.tsv")]
+    cmd = ["/home/b/buit/miniconda3/envs/HiWi/bin/python", "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_resolve_haplotype/resolve_haplotype_individual.py",
+            "-b", input_bam,
+            "-v", os.path.join(person_analysis_folder, "variants.tsv")
+            ]
     subprocess.run(cmd, check=True)
 
 if __name__ == "__main__":
     gene_dict = get_gene_id_and_name_dict(gene_id_with_name_file)
     start_time = time.time()
     for ID, _ in gene_dict.items():
-        print(f"Calling variants for gene: {ID}")
+        print(f"Resolve haplotypes for gene: {ID}")
         if chrom != "chrY":
             for person in FAMILY:
-                run_variant_calling(ID, person)
+                run_resolve_haplotype(ID, person)
         else:
             for person in FAMILY_MALE:
-                run_variant_calling(ID, person)
+                run_resolve_haplotype(ID, person)
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"Runtime for chunk {chunk}: {elapsed_time:.2f} seconds.")

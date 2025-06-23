@@ -86,8 +86,7 @@ def impute_genotype_position(ambiguous_positions_df, pangenome_dir, family_genot
     ambiguous_positions = sorted(ambiguous_positions_df["Position"].unique())
     gene_id = ambiguous_positions_df["Gene"].values[0]
     pangenome_df = get_pangenomic_analysis(pangenome_dir, gene_id)
-    
-    
+
     # Iterate over the ambiguous positions
     for position in ambiguous_positions:
         if pangenome_df is not None:
@@ -458,6 +457,7 @@ def infer_inputed_genotype(possible_genotypes_with_score, ref):
 
 def update_results_zip_file(imputed_table, results_zip_file):
     # read the existing results to a pd dataframe, header is the first row
+    #print(results_zip_file)
     results_df = pd.read_csv(results_zip_file, compression='gzip', header=0)
     # Add the Imputation column to the results_df
     results_df["Imputation"] = "-"
@@ -541,8 +541,12 @@ if __name__ == "__main__":
             exit(0)
 
     ambiguous_positions_df = get_ambiguous_table(ambiguous_file)
+    # remove rows if "Reference_Base" is "N" or "NA" in the ambiguous positions dataframe
+    ambiguous_positions_df = ambiguous_positions_df[~ambiguous_positions_df["Reference_Base"].isin(["N", "NA"])]
+    # if the ambiguous_positions_df is empty, then exit
+    if ambiguous_positions_df.empty:
+        exit(0)
     
-
     family_genotype_table = get_family_table(family_table_file)
     
 

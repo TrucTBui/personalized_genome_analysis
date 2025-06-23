@@ -130,6 +130,14 @@ def write_vcf_from_dataframe(df, output_file):
             gene = row.get('Gene', '.')
             region_type = row.get('Region', '.').replace(";",",")
             imputation = row.get('Imputation', '.')
+
+            if pd.isna(imputation):
+                imputation = '.' 
+            elif str(imputation).strip() == '-':
+                imputation = '.' 
+            else:
+                imputation = str(imputation).replace(";", ",")
+            
             variant_type = row.get('Type', '.') 
             
             clinvar_id = row.get('Var_ID', '.')
