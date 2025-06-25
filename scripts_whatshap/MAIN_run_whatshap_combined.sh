@@ -3,8 +3,8 @@ set -x
 
 whatshap_path="/home/b/buit/miniconda3/envs/HiWi/bin/whatshap"
 reference_fasta="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/input_genomes/human_g1k_v37.fasta"
-combined_vcf="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results_whatshap/combined_variants.vcf.gz"
-output_vcf="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results_whatshap/phased_combined_variants.vcf.gz"
+combined_vcf="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results_whatshap/unphased_combined_variants.vcf.gz"
+output_vcf="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/Results_whatshap/correctly_phased_combined_variants.vcf.gz"
 ped_file="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_whatshap/family.ped"
 log_dir="/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/scripts_whatshap/logs"
 

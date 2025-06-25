@@ -1,6 +1,7 @@
 import subprocess
 import os
 import tempfile
+import argparse
 
 def call_msa_pangenome_script(chromosome, start, end, strand, gfa, output_dir):
     reference_hg38_fasta = "/mnt/raidbio/biosoft/Data/GENOMIC/UNMODIFIED/PAN/homo_sapiens/hg38/dna/Homo_sapiens.GRCh38.dna.toplevel.fa"
@@ -234,6 +235,9 @@ def apply_pangenomic_structure(hap_seq, pangenome_template_line):
     return '\t'.join(hap_seq_segments)
     
 def msa_all(gene_id, chromosome, start, end, output_dir):
+    # create output directory if it does not exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
     has_msa_pangenome = False
     strand = find_strand_from_gtf(gene_id)
     
@@ -294,11 +298,18 @@ def msa_all(gene_id, chromosome, start, end, output_dir):
                 f.write(f">{person}_hap2\n{haplotypes[1]}\n")
 
     print(f"MSA file created at {output_file}")
+    if strand == "-":
+        print(f"Note: Strand for gene {gene_id} is negative. MSA will be generated with reverse complement sequences.")
+
 
 def msa_all_pedigree(gene_id, chromosome, start, end, output_dir):
+    # create output directory if it does not exist
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    has_msa_pangenome = False
     has_msa_pangenome = False
     strand = find_strand_from_gtf(gene_id)
-    
+
     # Extract MSA for the gene in the pangenome
     gfa = find_gene_in_pangenome(gene_id, chromosome)
     chromosomehg38, starthg38, endhg38 = lift_over_coordinates(f"chr{chromosome}", start, end)
@@ -360,16 +371,33 @@ def msa_all_pedigree(gene_id, chromosome, start, end, output_dir):
                 f.write(f">{person}_hap2\n{haplotypes[1]}\n")
 
     print(f"MSA file created at {output_file}")
+    if strand == "-":
+        print(f"Note: Strand for gene {gene_id} is negative. MSA will be generated with reverse complement sequences.")
 
 
-# Example usage:
 
-# Using VCF from individually phased samples
-#msa_all("ENSG00000001460", 1, 24683724, 24684895, "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/test_pangenom_2")
-msa_all("ENSG00000004975", 17, 7129840, 7133162, "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/test_pangenome_out")
 
-# Using VCF from pedigree-phased samples
-#msa_all_pedigree("ENSG00000001460", 1, 24683724, 24684895, "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/test_pangenom_2")
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser(description="Create MSA for a gene in the pangenome and haplotype sequences from the 8 samples.")
+    parser.add_argument("-g", "--gene_id", type=str, help="Ensembl gene ID (e.g., ENSG00000001460)")
+    parser.add_argument("-c", "--chromosome", type=int, help="Chromosome number (e.g, 1)")
+    parser.add_argument("-s", "--start", type=int, help="Start position of the gene in hg19 (e.g., 24683724)")
+    parser.add_argument("-e", "--end", type=int, help="End position of the gene in hg19 (e.g., 24684895)")
+    parser.add_argument("-o","--output_dir", type=str, help="Output directory to save the MSA file")
+
+    args = parser.parse_args()
+
+    msa_all_pedigree(args.gene_id, args.chromosome, args.start, args.end, args.output_dir)
+
+    # Example usage:
+
+    # Using VCF from individually phased samples
+    #msa_all("ENSG00000119943", 10, 100148308, 100148951, "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/test_pangenom_2")
+    #msa_all("ENSG00000004975", 17, 7129840, 7133162, "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/test_pangenome_out")
+
+    # Using VCF from pedigree-phased samples
+    #msa_all_pedigree("ENSG00000001460", 1, 24683724, 24684895, "/mnt/raidproj/proj/projekte/personalizedmed/PPG/miRNAs/test_pangenom_2")
 
 
 
