@@ -1,47 +1,42 @@
-# miRNAs
+# Analysis of Genomic Variation in High-Throughput Sequencing Data
 
-## bam_fa2seq.py
+This repository contains an integrated analytical framework designed to maximize the utility of affordable whole-genome sequencing (WGS) data. By leveraging replicate sequencing, Mendelian inheritance patterns, and pangenome references, this pipeline resolves low-coverage or repetitive regions that are often problematic in standard 30X WGS data.
 
-This script analyzes sequencing data from multiple genomes (provided as BAM files) to identify variants within specified regions of interest. It compares these variants to a reference genome provided in FASTA format.
+## Overview
+Standard 30X sequencing often suffers from gaps in repetitive regions or ambiguous calls at low-coverage loci. This project provides a robust methodology to bridge these gaps using a three-generation family-based approach.
 
-**Features**:
+Key Features:
 
-- Extracts reads from BAM files for specific genomic regions.
-- Identifies variants (SNPs) within the reads compared to the reference genome.
-- Calculates an approximate false sequencing error rate.
-- Generates two output files (configurable):
-  - summary.tsv: Summarizes variants and SNPs found for each region across all genomes.
-  - results.tsv: Detailed information about each variant call, including reference and alternative alleles for each genome analyzed.
+- Sample Quality Assessment: Compares blood-derived vs. saliva-derived WGS quality.
 
-**Requirements**:
-- Python 3+
-- pandas library
-- samtools 
+- Ambiguous Site Resolution: A custom imputation strategy utilizing replicate support and Mendelian consistency.
 
-**Usage**:
+- Pangenome Integration: Uses pangenome panels to enhance mapping and variant calling completeness.
 
-python3 bam_fa2seq.py -g <genomes.txt> -r <reference.fa> -l <location.txt> -o <output_dir> 
-Arguments:
+- Functional Annotation & Phasing: Clinical variant prioritization (ClinVar) and pedigree-based haplotype resolution.
 
-- -g (--genome): Path to a text file containing paths to BAM files (one per line).
-- -r (--reference): Path to the reference genome FASTA file.
-- -l (--location): Path to a text file containing genomic regions to analyze (one region per line, format: chr:start-end).
-- -o (--output) (Optional): Path to the output directory. Defaults to the current working directory.
+## Pipeline Architecture
+The framework is divided into three primary modules:
 
-Example:
-python3 bam_fa2seq.py --genome genomes.txt --reference /mnt/raidinput/input/own/ReferenceGenomes/human_g1k_v37.fasta.gz --location location.txt      
+1. Quality Control & Alignment
+Assesses sequencing metrics, including depth of coverage and mapping quality across different sample sources (blood vs. saliva).
 
-Requirements for input Files:
-- genomes.txt: A text file containing paths to each BAM file, one per line.
-- location.txt: A text file containing genomic regions to analyze, one per line. Each line should be formatted as chromosome:start-end (e.g., chr1:1000-2000).
+2. Variant Refinement (The Core Engine)
+Resolves "ambiguous" genotypes by integrating three layers of evidence:
 
-Output Files:
-- summary.tsv: A tab-delimited file summarizing variants and SNPs found for each region across all genomes.
-- results.tsv: A tab-delimited file containing detailed information about each variant call, including reference and alternative alleles for each genome analyzed. (Written to a temporary file first, then transformed and written to the final output file.)
+- Replicate Support: Cross-referencing calls from multiple runs of the same individual.
 
-Notes:
-- Please ensure that the chromosome names in your location specifications match the format used in your BAM files. Some BAM files use "chr1", "chr2", etc., while others use "1", "2", etc. 
-- This script uses temporary files during execution, which are automatically cleaned up.
-- The script calculates an approximate false sequencing error rate based on the identified variants.
-- This script provides a basic framework for variant calling and analysis. You can modify it to suit your specific needs, such as filtering variants based on quality scores or incorporating additional analysis steps.
-- This script relies on samtools, which is installed and accessible from the LMU Bioinformatics chair's internal environment. You may need to adjust the samtools command if used in a different setup.
+- Mendelian Consistency: Using family pedigree data to validate or correct inheritance patterns.
+
+- Pangenome Imputation: Utilizing a pangenome reference to resolve complex or repetitive loci.
+
+3. Functional Interpretation
+- Clinical Annotation: Filters and identifies "Pathogenic" and "Likely Pathogenic" variants via ClinVar.
+
+- Haplotype Phasing: Gene-wise phasing within coding regions to resolve local haplotypes.
+
+## Data Privacy Notice
+Please Note: The genomic data utilized in this thesis is strictly private and is not included in this repository.
+
+This repository provides the source code, scripts, and analytical framework only. 
+
